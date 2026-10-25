@@ -1,0 +1,4 @@
+# Danh sách Gmail được cấp quyền sử dụng NHPinfo (mỗi dòng 1 email)
+admin@gmail.com
+khachhang1@gmail.com
+nguyenhungphi@gmail.com
