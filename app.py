@@ -1,8 +1,11 @@
 import os
 import io
 import re
+import json
 import zipfile
 import xml.etree.ElementTree as ET
+import urllib.request
+import urllib.error
 import subprocess
 import weasyprint
 import pypdf
@@ -31,12 +34,11 @@ def check_gmail_whitelist(email):
     return True, "Hợp lệ"
 
 def extract_text_from_upload(file_storage):
-    """Trích xuất nội dung văn bản từ file Word (.docx), PDF hoặc TXT"""
+    """Trích xuất văn bản từ file Word (.docx), PDF hoặc TXT"""
     filename = (file_storage.filename or '').lower()
     content = file_storage.read()
     file_storage.seek(0)
     
-    # 1. Đọc file PDF
     if filename.endswith('.pdf'):
         try:
             reader = pypdf.PdfReader(io.BytesIO(content))
@@ -45,7 +47,6 @@ def extract_text_from_upload(file_storage):
         except Exception:
             return ""
             
-    # 2. Đọc file Word (.docx) trực tiếp không cần thư viện ngoài
     elif filename.endswith('.docx'):
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as docx:
@@ -61,7 +62,6 @@ def extract_text_from_upload(file_storage):
         except Exception:
             return ""
             
-    # 3. Đọc file text
     elif filename.endswith('.txt'):
         try:
             return content.decode('utf-8', errors='ignore').strip()
@@ -70,27 +70,96 @@ def extract_text_from_upload(file_storage):
             
     return ""
 
+def call_gemini_to_extract_data(raw_text, api_key):
+    """Gọi Gemini API phân tích nội dung thực tế từ văn bản của người dùng"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
+    prompt = f"""Bạn là chuyên gia thiết kế Infographic 4K chuẩn hành chính và truyền thông.
+Nhiệm vụ của bạn: Hãy phân tích kỹ văn bản dưới đây và trích xuất thông tin phù hợp nhất để đưa lên poster Infographic.
+Chỉ trả về DUY NHẤT một chuỗi JSON chuẩn (không dùng markdown, không có ```json).
+
+VĂN BẢN ĐẦU VÀO:
+\"\"\"
+{raw_text}
+\"\"\"
+
+Cấu trúc JSON yêu cầu:
+{{
+  "title": "Tiêu đề chính ngắn gọn, súc tích (viết in hoa)",
+  "agency": "Tên cơ quan, tổ chức, doanh nghiệp hoặc đơn vị ban hành (in hoa)",
+  "doc_code": "Số hiệu văn bản, ngày tháng hoặc thông điệp ngắn nổi bật",
+  "stat1_val": "Số liệu / mốc thời gian nổi bật 1 (ngắn)",
+  "stat1_sub": "Diễn giải cho số liệu 1",
+  "stat2_val": "Số liệu / mốc thời gian nổi bật 2 (ngắn)",
+  "stat2_sub": "Diễn giải cho số liệu 2",
+  "stat3_val": "Số liệu / mốc thời gian nổi bật 3 (ngắn)",
+  "stat3_sub": "Diễn giải cho số liệu 3",
+  "alert_title": "Tiêu đề khối nội dung trọng tâm",
+  "alert_lead": "Ý chính quan trọng nhất cần ghi nhớ",
+  "alert_desc": "Chi tiết tóm tắt nội dung chính của tài liệu",
+  "alert_reason": "Căn cứ pháp lý, nguyên nhân hoặc mục tiêu",
+  "scope_title": "Tiêu đề khối danh sách (Ví dụ: ĐỐI TƯỢNG ÁP DỤNG, CÁC HẠNG MỤC, TIÊU CHÍ...)",
+  "hamlets": ["Mục 1", "Mục 2", "Mục 3", "Mục 4", "Mục 5", "Mỗi mục ngắn gọn, tối đa 10-15 mục"],
+  "quote_text": "Thông điệp cốt lõi, lời nhắn nhủ hoặc cam kết",
+  "slogan_highlight": "Khẩu hiệu ngắn gọn viết in hoa",
+  "notice_text": "Lưu ý thực hiện, nơi nộp hoặc kênh liên hệ theo dõi",
+  "btn_text": "Nút hành động (Ví dụ: XEM CHI TIẾT, LIÊN HỆ NGAY, THEO DÕI...)",
+  "footer_text": "Tên đơn vị hoặc thông điệp chân trang (in hoa)"
+}}"""
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
+    }
+    
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp_body = json.loads(resp.read().decode('utf-8'))
+            text_result = resp_body['candidates'][0]['content']['parts'][0]['text']
+            return json.loads(text_result)
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            raise Exception("Gemini API Key không hợp lệ! Vui lòng kiểm tra lại Key.")
+        elif e.code == 429:
+            raise Exception("Gemini API Key đã hết lượt gọi trong ngày (Rate Limit)!")
+        else:
+            raise Exception(f"Lỗi gọi Gemini API (Mã {e.code})")
+    except Exception as e:
+        raise Exception(f"Không thể kết nối đến Gemini: {str(e)}")
+
 def build_4k_html(data):
-    title = data.get('title', 'THÔNG BÁO HOÀN TRẢ TIỀN BẢO HIỂM Y TẾ')
-    sub_title = data.get('agency', 'BẢO HIỂM XÃ HỘI TỈNH ĐỒNG THÁP — CƠ SỞ THANH BÌNH')
+    """Tạo HTML khổ 2160x3840 hoàn toàn dựa theo dữ liệu đầu vào"""
+    title = data.get('title', 'THÔNG TIN CHI TIẾT')
+    sub_title = data.get('agency', 'THÔNG BÁO')
     tagline = data.get('doc_code', '★ THÔNG BÁO CHÍNH THỨC ★')
     
-    stat1_val = data.get('stat1_val', 'Từ 27/10/2026')
-    stat1_sub = data.get('stat1_sub', '<strong>Thứ Ba</strong> — Bắt đầu áp dụng')
-    stat2_val = data.get('stat2_val', '15 Ấp Toàn Xã')
-    stat2_sub = data.get('stat2_sub', 'Áp dụng trên toàn địa bàn')
-    stat3_val = data.get('stat3_val', 'Quyền Lợi Đầy Đủ')
-    stat3_sub = data.get('stat3_sub', 'Được bảo đảm <strong>100%</strong> theo quy định')
+    stat1_val = data.get('stat1_val', 'Thông Tin 1')
+    stat1_sub = data.get('stat1_sub', 'Nội dung chi tiết')
+    stat2_val = data.get('stat2_val', 'Thông Tin 2')
+    stat2_sub = data.get('stat2_sub', 'Nội dung chi tiết')
+    stat3_val = data.get('stat3_val', 'Thông Tin 3')
+    stat3_sub = data.get('stat3_sub', 'Nội dung chi tiết')
     
-    alert_title = data.get('alert_title', 'THỜI GIAN & LÝ DO TẠM DỪNG HOÀN TRẢ')
-    alert_lead = data.get('alert_lead', 'Thời gian tạm dừng: Kể từ thứ Ba, ngày 27/10/2026')
-    alert_desc = data.get('alert_desc', 'Tạm hoãn lịch đăng ký và nhận hoàn trả tiền đóng BHYT hộ gia đình theo thông báo trước đây.')
-    alert_reason = data.get('alert_reason', 'Rà soát và cập nhật thủ tục hành chính mới theo Quyết định số 2695/QĐ-BTC của Bộ Tài chính.')
+    alert_title = data.get('alert_title', 'THÔNG TIN TRỌNG TÂM')
+    alert_lead = data.get('alert_lead', 'Nội dung quan trọng cần lưu ý')
+    alert_desc = data.get('alert_desc', 'Chi tiết các nội dung cần thực hiện theo thông báo.')
+    alert_reason = data.get('alert_reason', 'Căn cứ theo yêu cầu và quy định.')
     
-    scope_title = data.get('scope_title', 'PHẠM VI ÁP DỤNG TẠI CÁC ĐỊA BÀN')
-    hamlets = data.get('hamlets', ['Ấp Hạ', 'Ấp Trung', 'Ấp Thượng', 'Ấp Tân Quới', 'Ấp Phú Trung', 
-                                    'Ấp Tân Thới', 'Ấp Tân Dinh', 'Ấp Tân Hòa', 'Ấp Tân Bình Thượng', 'Ấp Tân Huề', 
-                                    'Ấp Tân Phong', 'Ấp Tân Bình Hạ', 'Ấp Tân An', 'Ấp Thạnh An', 'Ấp Tân Thạnh'])
+    scope_title = data.get('scope_title', 'DANH SÁCH & HẠNG MỤC LIÊN QUAN')
+    hamlets = data.get('hamlets', [])
+    if isinstance(hamlets, str):
+        hamlets = [hamlets]
+    if not hamlets:
+        hamlets = ['Hạng mục 1', 'Hạng mục 2', 'Hạng mục 3', 'Hạng mục 4', 'Hạng mục 5']
     
     hamlet_rows = []
     chunk_size = 5
@@ -110,11 +179,11 @@ def build_4k_html(data):
                 hamlet_html += '<td style="border:none;"></td>'
         hamlet_html += "</tr>"
         
-    quote_text = data.get('quote_text', 'Sau khi hoàn tất sắp xếp thời gian và phương thức theo quy định mới, cơ quan chức năng sẽ thông báo cụ thể thời gian và địa điểm tiếp tục thực hiện để người dân đến nhận tiền.')
-    slogan_highlight = data.get('slogan_highlight', 'QUYỀN LỢI CỦA NGƯỜI DÂN LUÔN ĐƯỢC BẢO ĐẢM ĐẦY ĐỦ!')
-    notice_text = data.get('notice_text', 'Bà con chủ động theo dõi thông báo mới tại UBND xã, Bưu điện xã hoặc ViettelPost trên địa bàn.')
-    btn_text = data.get('btn_text', 'CHỜ THÔNG BÁO MỚI')
-    footer_text = data.get('footer_text', 'VÌ AN SINH XÃ HỘI VÀ QUYỀN LỢI NHÂN DÂN')
+    quote_text = data.get('quote_text', 'Mọi thắc mắc vui lòng liên hệ trực tiếp để được giải đáp cụ thể.')
+    slogan_highlight = data.get('slogan_highlight', 'ĐẢM BẢO CHÍNH XÁC - MINH BẠCH - HIỆU QUẢ')
+    notice_text = data.get('notice_text', 'Theo dõi thường xuyên các kênh thông tin để cập nhật thông báo mới.')
+    btn_text = data.get('btn_text', 'THEO DÕI NGAY')
+    footer_text = data.get('footer_text', 'THÔNG TIN CHÍNH THỨC')
 
     html = f"""<!DOCTYPE html>
 <html lang="vi">
@@ -164,9 +233,9 @@ td.row-td {{
   margin-bottom: 20px;
 }}
 .main-title {{
-  font-size: 92px;
+  font-size: 84px;
   font-weight: 900;
-  line-height: 1.22;
+  line-height: 1.25;
   text-transform: uppercase;
   color: #ffffff;
   margin-bottom: 24px;
@@ -394,7 +463,7 @@ td.btn-td {{
             <div class="stat-sub">{stat1_sub}</div>
           </td>
           <td class="stat-cell">
-            <div class="stat-icon">🏘️</div>
+            <div class="stat-icon">📌</div>
             <div class="stat-heading">{stat2_val}</div>
             <div class="stat-sub">{stat2_sub}</div>
           </td>
@@ -428,7 +497,7 @@ td.btn-td {{
     <td class="row-td">
       <div class="scope-card">
         <div class="scope-header">
-          <span class="scope-tag">ĐỊA BÀN</span>
+          <span class="scope-tag">CHI TIẾT</span>
           <span>{scope_title}</span>
         </div>
         <table class="hamlet-grid">
@@ -450,7 +519,7 @@ td.btn-td {{
       <div class="notice-box">
         <table class="notice-table">
           <tr>
-            <td class="notice-text-td">📢 <strong>Theo dõi:</strong> {notice_text}</td>
+            <td class="notice-text-td">📢 <strong>Lưu ý:</strong> {notice_text}</td>
             <td class="btn-td"><div class="action-btn">{btn_text}</div></td>
           </tr>
         </table>
@@ -485,20 +554,33 @@ def render_html_to_4k_png(html_str, output_filename_base):
 
 @app.route('/')
 def index():
-    # Tự động chèn nút tải file Word/PDF vào giao diện hiện tại mà không cần sửa file HTML
     template_path = os.path.join(app.root_path, 'templates', 'index.html')
     if os.path.exists(template_path):
         with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        if 'id="auto-file-uploader"' not in content:
-            upload_ui = """
+        if 'id="gemini-key-container"' not in content:
+            extra_ui = """
+            <div id="gemini-key-container" style="margin-bottom: 20px;">
+                <label style="font-weight: bold; color: #1e293b; display: block; margin-bottom: 8px;">
+                    🔑 Gemini API Key của bạn (*)
+                </label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="password" id="user_gemini_api_key" placeholder="Dán Gemini API Key của bạn vào đây (AIzaSy...)" 
+                           style="flex: 1; padding: 12px 14px; border: 2px solid #cbd5e1; border-radius: 10px; font-size: 14px; outline: none;">
+                    <button type="button" id="toggle_key_btn" style="padding: 0 15px; border-radius: 10px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer;">👁️</button>
+                </div>
+                <div style="font-size: 12px; color: #64748b; margin-top: 5px;">
+                    💡 Key được lưu trên trình duyệt riêng của bạn. Lấy miễn phí tại <a href="[https://aistudio.google.com/apikey](https://aistudio.google.com/apikey)" target="_blank" style="color: #0284c7; font-weight: bold;">Google AI Studio</a>.
+                </div>
+            </div>
+
             <div id="auto-file-uploader" style="margin: 10px 0 15px 0; padding: 14px 18px; background: #f0f7ff; border: 2px dashed #0284c7; border-radius: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-size: 24px;">📄</span>
                     <div>
                         <strong style="color: #0369a1; font-size: 14px;">Hoặc tải lên file Word (.docx) / PDF</strong>
-                        <div style="font-size: 12px; color: #64748b;">Hệ thống sẽ tự động đọc nội dung và điền vào ô bên dưới</div>
+                        <div style="font-size: 12px; color: #64748b;">Tự động đọc nội dung file điền vào ô bên dưới</div>
                     </div>
                 </div>
                 <label style="background: linear-gradient(135deg, #0284c7, #0369a1); color: white; padding: 9px 18px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 13px; display: inline-block;">
@@ -509,9 +591,32 @@ def index():
             </div>
             """
 
-            upload_script = """
+            extra_script = """
             <script>
             document.addEventListener('DOMContentLoaded', function() {
+                var keyInput = document.getElementById('user_gemini_api_key');
+                var toggleBtn = document.getElementById('toggle_key_btn');
+                
+                if (keyInput) {
+                    var savedKey = localStorage.getItem('nhp_gemini_key') || '';
+                    if (savedKey) keyInput.value = savedKey;
+                    keyInput.addEventListener('input', function() {
+                        localStorage.setItem('nhp_gemini_key', keyInput.value.trim());
+                    });
+                }
+                
+                if (toggleBtn && keyInput) {
+                    toggleBtn.addEventListener('click', function() {
+                        if (keyInput.type === 'password') {
+                            keyInput.type = 'text';
+                            toggleBtn.innerText = '🔒';
+                        } else {
+                            keyInput.type = 'password';
+                            toggleBtn.innerText = '👁️';
+                        }
+                    });
+                }
+
                 var fileInput = document.getElementById('doc_file_input');
                 var status = document.getElementById('upload_status');
                 var textarea = document.querySelector('textarea');
@@ -523,14 +628,14 @@ def index():
                         
                         status.style.display = 'block';
                         status.style.color = '#0284c7';
-                        status.innerText = '⏳ Đang đọc nội dung file "' + file.name + '"...';
+                        status.innerText = '⏳ Đang trích xuất văn bản từ "' + file.name + '"...';
                         
-                        var formData = new FormData();
-                        formData.append('file', file);
+                        var fd = new FormData();
+                        fd.append('file', file);
                         
                         fetch('/api/extract-doc', {
                             method: 'POST',
-                            body: formData
+                            body: fd
                         })
                         .then(function(res) { return res.json(); })
                         .then(function(data) {
@@ -538,28 +643,42 @@ def index():
                                 textarea.value = data.text;
                                 textarea.dispatchEvent(new Event('input', { bubbles: true }));
                                 status.style.color = '#16a34a';
-                                status.innerText = '✅ Đã trích xuất thành công nội dung từ file "' + file.name + '"!';
+                                status.innerText = '✅ Đã trích xuất thành công văn bản!';
                             } else {
                                 status.style.color = '#dc2626';
-                                status.innerText = '❌ ' + (data.error || 'Không thể trích xuất văn bản từ file!');
+                                status.innerText = '❌ ' + (data.error || 'Lỗi đọc file!');
                             }
                         })
                         .catch(function(err) {
                             status.style.color = '#dc2626';
-                            status.innerText = '❌ Lỗi đọc file: ' + err.message;
+                            status.innerText = '❌ Lỗi: ' + err.message;
                         });
                     });
                 }
+
+                var origFetch = window.fetch;
+                window.fetch = function(url, init) {
+                    if (typeof url === 'string' && url.includes('/api/generate')) {
+                        var k = keyInput ? keyInput.value.trim() : (localStorage.getItem('nhp_gemini_key') || '');
+                        if (init && init.body instanceof FormData) {
+                            init.body.set('gemini_api_key', k);
+                        }
+                    }
+                    return origFetch.apply(this, arguments);
+                };
             });
             </script>
             """
 
             if '<textarea' in content:
-                content = content.replace('<textarea', upload_ui + '<textarea', 1)
+                content = content.replace('<textarea', extra_ui + '<textarea', 1)
+            elif 'id="content"' in content:
+                content = content.replace('id="content"', 'id="content"' + extra_ui, 1)
+
             if '</body>' in content:
-                content = content.replace('</body>', upload_script + '</body>', 1)
+                content = content.replace('</body>', extra_script + '</body>', 1)
             else:
-                content += upload_script
+                content += extra_script
 
         return content
     return render_template('index.html')
@@ -585,6 +704,10 @@ def generate_infographic():
     if not is_valid:
         return jsonify({'success': False, 'error': msg, 'show_qr': True}), 403
     
+    gemini_key = request.form.get('gemini_api_key', '').strip()
+    if not gemini_key:
+        return jsonify({'success': False, 'error': 'Vui lòng nhập Gemini API Key của bạn để phân tích nội dung!'}), 400
+    
     raw_text = request.form.get('content', '').strip()
     if not raw_text and 'file' in request.files:
         raw_text = extract_text_from_upload(request.files['file'])
@@ -592,33 +715,19 @@ def generate_infographic():
     if not raw_text:
         return jsonify({'success': False, 'error': 'Vui lòng dán văn bản hoặc tải file tài liệu!'}), 400
     
-    data = {
-        'title': 'THÔNG BÁO TẠM DỪNG HOÀN TRẢ TIỀN ĐÓNG BHYT HỘ GIA ĐÌNH',
-        'agency': 'BẢO HIỂM XÃ HỘI TỈNH ĐỒNG THÁP — CƠ SỞ THANH BÌNH',
-        'doc_code': '★ THÔNG BÁO SỐ 554/TB-BHXH NGÀY 23/10/2026 ★ XÃ TÂN LONG ★',
-        'stat1_val': 'Từ 27/10/2026',
-        'stat1_sub': '<strong>Thứ Ba</strong> — Bắt đầu tạm dừng đến khi có thông báo mới',
-        'stat2_val': '15 Ấp Toàn Xã',
-        'stat2_sub': 'Áp dụng đồng loạt cho bà con thuộc <strong>xã Tân Long</strong>',
-        'stat3_val': 'Quyền Lợi Đầy Đủ',
-        'stat3_sub': 'Sẽ thông báo <strong>lịch chi trả mới</strong> ngay khi hoàn tất rà soát',
-        'alert_title': 'THỜI GIAN & LÝ DO TẠM DỪNG HOÀN TRẢ',
-        'alert_lead': 'Thời gian tạm dừng: Kể từ thứ Ba, ngày 27/10/2026',
-        'alert_desc': 'Tạm hoãn lịch đăng ký và nhận hoàn trả tiền đóng BHYT hộ gia đình Đợt 2 theo <strong>Thông báo số 495/TB-BHXH</strong> trước đây.',
-        'alert_reason': 'Rà soát và cập nhật thủ tục hành chính mới theo <strong>Quyết định số 2695/QĐ-BTC</strong> ngày <strong>28/9/2026</strong> của <strong>Bộ Tài chính</strong>.',
-        'scope_title': 'PHẠM VI ÁP DỤNG TẠI 15 ẤP (XÃ TÂN LONG)',
-        'hamlets': ['Ấp Hạ', 'Ấp Trung', 'Ấp Thượng', 'Ấp Tân Quới', 'Ấp Phú Trung', 
-                    'Ấp Tân Thới', 'Ấp Tân Dinh', 'Ấp Tân Hòa', 'Ấp Tân Bình Thượng', 'Ấp Tân Huề', 
-                    'Ấp Tân Phong', 'Ấp Tân Bình Hạ', 'Ấp Tân An', 'Ấp Thạnh An', 'Ấp Tân Thạnh'],
-        'quote_text': 'Sau khi hoàn tất sắp xếp thời gian, nhân sự và phương thức hoàn trả theo quy định mới, Bảo hiểm xã hội cơ sở Thanh Bình sẽ thông báo cụ thể thời gian và địa điểm tiếp tục thực hiện để người dân đến nhận tiền.',
-        'slogan_highlight': 'QUYỀN LỢI CỦA NGƯỜI DÂN LUÔN ĐƯỢC BẢO ĐẢM ĐẦY ĐỦ!',
-        'notice_text': 'Bà con chủ động theo dõi thông báo mới tại <strong>UBND xã Tân Long</strong>, <strong>Bưu điện xã</strong> hoặc <strong>ViettelPost</strong>.',
-        'btn_text': 'CHỜ THÔNG BÁO MỚI',
-        'footer_text': 'BẢO HIỂM XÃ HỘI CƠ SỞ THANH BÌNH — VÌ AN SINH XÃ HỘI VÀ QUYỀN LỢI NHÂN DÂN'
-    }
+    # 1. Gemini phân tích nội dung tùy ý do người dùng nhập vào
+    try:
+        infographic_data = call_gemini_to_extract_data(raw_text, gemini_key)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
     
+    # 2. Sinh ảnh Infographic 4K hoàn toàn theo kết quả phân tích
     output_base = "Infographic_4K_Output"
-    png_path = render_html_to_4k_png(build_4k_html(data), output_base)
+    try:
+        html_content = build_4k_html(infographic_data)
+        png_path = render_html_to_4k_png(html_content, output_base)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Lỗi render ảnh: {str(e)}"}), 500
     
     return jsonify({
         'success': True,
