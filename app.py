@@ -72,7 +72,7 @@ def extract_text_from_upload(file_storage):
 
 def call_gemini_to_extract_data(raw_text, api_key):
     """Gọi Gemini API phân tích nội dung thực tế từ văn bản của người dùng"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""Bạn là chuyên gia thiết kế Infographic 4K chuẩn hành chính và truyền thông.
 Nhiệm vụ của bạn: Hãy phân tích kỹ văn bản dưới đây và trích xuất thông tin phù hợp nhất để đưa lên poster Infographic.
