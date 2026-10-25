@@ -1,1 +1,282 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NHPinfo - Chuyển Đổi Văn Bản Thành Infographic 4K</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #003366;
+      --secondary: #026696;
+      --accent: #f59e0b;
+      --bg: #f1f6fb;
+      --card: #ffffff;
+      --text: #1e293b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: #ffffff;
+      padding: 30px 20px;
+      text-align: center;
+      border-bottom: 4px solid var(--accent);
+      box-shadow: 0 4px 20px rgba(0, 51, 102, 0.15);
+    }
+    header h1 { font-size: 32px; font-weight: 900; letter-spacing: 1px; margin-bottom: 8px; }
+    header p { font-size: 16px; color: #bae6fd; font-weight: 500; }
+    
+    .container {
+      max-width: 900px;
+      width: 100%;
+      margin: 40px auto;
+      padding: 0 20px;
+      flex: 1;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 24px;
+      padding: 35px;
+      box-shadow: 0 10px 30px rgba(0, 51, 102, 0.06);
+      border: 1px solid #dbeafe;
+      margin-bottom: 30px;
+    }
+    .form-group { margin-bottom: 24px; }
+    label {
+      display: block;
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 10px;
+    }
+    input[type="text"], input[type="email"], textarea {
+      width: 100%;
+      padding: 14px 18px;
+      border-radius: 12px;
+      border: 2px solid #cbd5e1;
+      font-size: 15px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, input[type="email"]:focus, textarea:focus {
+      outline: none;
+      border-color: #0284c7;
+    }
+    textarea { height: 180px; resize: vertical; }
+    
+    .btn-submit {
+      width: 100%;
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #ffffff;
+      border: none;
+      padding: 18px 24px;
+      border-radius: 14px;
+      font-size: 18px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(217, 119, 6, 0.3);
+      transition: transform 0.1s, opacity 0.2s;
+    }
+    .btn-submit:hover { opacity: 0.95; }
+    .btn-submit:active { transform: scale(0.99); }
+    .btn-submit:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+    
+    /* Result section */
+    .result-section {
+      display: none;
+      text-align: center;
+    }
+    .preview-box {
+      margin: 25px 0;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 2px solid #cbd5e1;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+      max-height: 600px;
+      overflow-y: auto;
+      background: #e2e8f0;
+    }
+    .preview-box img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .btn-download {
+      display: inline-block;
+      background: #0284c7;
+      color: #ffffff;
+      text-decoration: none;
+      padding: 16px 36px;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 700;
+      box-shadow: 0 6px 18px rgba(2, 132, 199, 0.3);
+    }
+    
+    /* Modal QR */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-content {
+      background: #ffffff;
+      border-radius: 28px;
+      padding: 40px;
+      max-width: 480px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+      border: 3px solid #f59e0b;
+    }
+    .modal-content img {
+      width: 240px;
+      height: auto;
+      border-radius: 16px;
+      margin: 20px 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+    }
+    .btn-close {
+      background: #e2e8f0;
+      color: #334155;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 15px;
+    }
+    
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 14px;
+      color: #64748b;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
 
+  <header>
+    <h1>NHPinfo — CÔNG CỤ TẠO INFOGRAPHIC 4K</h1>
+    <p>Biến công văn, tài liệu thành ảnh Infographic 1 trang sắc nét chuẩn 4K trong 1 cú nhấp chuột</p>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <form id="infographicForm">
+        <div class="form-group">
+          <label for="email">1. Địa chỉ Gmail đăng ký kích hoạt (*)</label>
+          <input type="email" id="email" name="email" placeholder="Nhập Gmail của bạn (vd: name@gmail.com)" required>
+        </div>
+
+        <div class="form-group">
+          <label for="content">2. Nội dung công văn / tài liệu cần tạo Infographic (*)</label>
+          <textarea id="content" name="content" placeholder="Dán toàn bộ văn bản hoặc thông báo tại đây..." required></textarea>
+        </div>
+
+        <button type="submit" class="btn-submit" id="btnSubmit">
+          🚀 TẠO INFOGRAPHIC 4K NGAY
+        </button>
+      </form>
+    </div>
+
+    <!-- Kết quả -->
+    <div class="card result-section" id="resultCard">
+      <h2 style="font-size: 24px; color: #0284c7; margin-bottom: 10px;">🎉 Tạo Infographic 4K Thành Công!</h2>
+      <p style="color: #64748b; margin-bottom: 20px;">Định dạng chuẩn .PNG (2160 x 3840 px) lossless sắc nét tuyệt đối</p>
+      
+      <div class="preview-box">
+        <img id="previewImg" src="" alt="Infographic Preview">
+      </div>
+
+      <a id="downloadLink" href="#" class="btn-download" download>
+        📥 TẢI VỀ ẢNH .PNG 4K NGUYÊN BẢN
+      </a>
+    </div>
+  </div>
+
+  <!-- Modal Khóa Zalo -->
+  <div class="modal-overlay" id="zaloModal">
+    <div class="modal-content">
+      <h3 style="font-size: 22px; color: #dc2626; margin-bottom: 12px;">🔒 YÊU CẦU MỞ KHÓA SKILL</h3>
+      <p style="font-size: 15px; line-height: 1.5; color: #475569;" id="modalMsg">
+        Gmail chưa được kích hoạt trong hệ thống. Vui lòng quét mã QR hoặc bấm link dưới để vào nhóm Zalo inbox đăng ký!
+      </p>
+      <img src="/static/zalo_qr.png" alt="Mã QR Zalo">
+      <div>
+        <a href="https://zalo.me/g/ykiymn395" target="_blank" style="color: #0284c7; font-weight: 700; text-decoration: none; font-size: 16px;">
+          👉 Bấm vào đây để vào nhóm Zalo
+        </a>
+      </div>
+      <button class="btn-close" onclick="document.getElementById('zaloModal').style.display='none'">Đóng</button>
+    </div>
+  </div>
+
+  <footer>
+    CỘNG ĐỒNG KHAI THÁC AI HIỆU QUẢ — NGUYỄN HÙNG PHI
+  </footer>
+
+  <script>
+    const form = document.getElementById('infographicForm');
+    const btn = document.getElementById('btnSubmit');
+    const resultCard = document.getElementById('resultCard');
+    const previewImg = document.getElementById('previewImg');
+    const downloadLink = document.getElementById('downloadLink');
+    const modal = document.getElementById('zaloModal');
+    const modalMsg = document.getElementById('modalMsg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.innerText = '⏳ ĐANG XỬ LÝ & KẾT XUẤT 4K...';
+      resultCard.style.display = 'none';
+
+      const formData = new FormData(form);
+
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          previewImg.src = data.preview_url + '?t=' + new Date().getTime();
+          downloadLink.href = data.download_url;
+          resultCard.style.display = 'block';
+          resultCard.scrollIntoView({ behavior: 'smooth' });
+        } else {
+          if (data.show_qr) {
+            modalMsg.innerText = data.error;
+            modal.style.display = 'flex';
+          } else {
+            alert('Lỗi: ' + data.error);
+          }
+        }
+      } catch (err) {
+        alert('Lỗi kết nối máy chủ!');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '🚀 TẠO INFOGRAPHIC 4K NGAY';
+      }
+    });
+  </script>
+</body>
+</html>
