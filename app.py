@@ -3,9 +3,10 @@ import io
 import re
 import json
 import zipfile
-import xml.etree.ElementTree as ET
 import urllib.request
+import urllib.parse
 import urllib.error
+import xml.etree.ElementTree as ET
 import subprocess
 import weasyprint
 import pypdf
@@ -71,11 +72,11 @@ def extract_text_from_upload(file_storage):
     return ""
 
 def call_gemini_to_extract_data(raw_text, api_key):
-    """Gọi Gemini API phân tích nội dung thực tế từ văn bản của người dùng"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    """Gọi Gemini API phân tích nội dung thực tế (tự động luân chuyển model nếu gặp 404)"""
+    clean_key = urllib.parse.quote(api_key.strip())
     
     prompt = f"""Bạn là chuyên gia thiết kế Infographic 4K chuẩn hành chính và truyền thông.
-Nhiệm vụ của bạn: Hãy phân tích kỹ văn bản dưới đây và trích xuất thông tin phù hợp nhất để đưa lên poster Infographic.
+Nhiệm vụ: Phân tích kỹ toàn bộ văn bản dưới đây và trích xuất đúng thông tin thực tế từ văn bản để đưa lên poster Infographic.
 Chỉ trả về DUY NHẤT một chuỗi JSON chuẩn (không dùng markdown, không có ```json).
 
 VĂN BẢN ĐẦU VÀO:
@@ -86,24 +87,24 @@ VĂN BẢN ĐẦU VÀO:
 Cấu trúc JSON yêu cầu:
 {{
   "title": "Tiêu đề chính ngắn gọn, súc tích (viết in hoa)",
-  "agency": "Tên cơ quan, tổ chức, doanh nghiệp hoặc đơn vị ban hành (in hoa)",
-  "doc_code": "Số hiệu văn bản, ngày tháng hoặc thông điệp ngắn nổi bật",
-  "stat1_val": "Số liệu / mốc thời gian nổi bật 1 (ngắn)",
+  "agency": "Tên cơ quan, tổ chức, công ty hoặc người gửi (in hoa)",
+  "doc_code": "Số hiệu văn bản, ngày tháng ban hành hoặc thông điệp nổi bật",
+  "stat1_val": "Mốc thời gian / số liệu nổi bật 1 (ngắn)",
   "stat1_sub": "Diễn giải cho số liệu 1",
-  "stat2_val": "Số liệu / mốc thời gian nổi bật 2 (ngắn)",
+  "stat2_val": "Mốc thời gian / số liệu nổi bật 2 (ngắn)",
   "stat2_sub": "Diễn giải cho số liệu 2",
-  "stat3_val": "Số liệu / mốc thời gian nổi bật 3 (ngắn)",
+  "stat3_val": "Mốc thời gian / số liệu nổi bật 3 (ngắn)",
   "stat3_sub": "Diễn giải cho số liệu 3",
   "alert_title": "Tiêu đề khối nội dung trọng tâm",
-  "alert_lead": "Ý chính quan trọng nhất cần ghi nhớ",
-  "alert_desc": "Chi tiết tóm tắt nội dung chính của tài liệu",
-  "alert_reason": "Căn cứ pháp lý, nguyên nhân hoặc mục tiêu",
-  "scope_title": "Tiêu đề khối danh sách (Ví dụ: ĐỐI TƯỢNG ÁP DỤNG, CÁC HẠNG MỤC, TIÊU CHÍ...)",
-  "hamlets": ["Mục 1", "Mục 2", "Mục 3", "Mục 4", "Mục 5", "Mỗi mục ngắn gọn, tối đa 10-15 mục"],
-  "quote_text": "Thông điệp cốt lõi, lời nhắn nhủ hoặc cam kết",
+  "alert_lead": "Ý chính quan trọng nhất cần lưu ý",
+  "alert_desc": "Chi tiết tóm tắt nội dung của văn bản",
+  "alert_reason": "Căn cứ, mục đích hoặc lý do thực hiện",
+  "scope_title": "Tiêu đề khối danh sách (Ví dụ: PHẠM VI ÁP DỤNG, CƠ CẤU GIẢI THƯỞNG, HẠNG MỤC...)",
+  "hamlets": ["Mục 1", "Mục 2", "Mục 3", "Mục 4", "Mục 5", "Tối đa 15 mục chi tiết ngắn"],
+  "quote_text": "Thông điệp cốt lõi, lời kêu gọi hoặc cam kết chính",
   "slogan_highlight": "Khẩu hiệu ngắn gọn viết in hoa",
-  "notice_text": "Lưu ý thực hiện, nơi nộp hoặc kênh liên hệ theo dõi",
-  "btn_text": "Nút hành động (Ví dụ: XEM CHI TIẾT, LIÊN HỆ NGAY, THEO DÕI...)",
+  "notice_text": "Kênh tiếp nhận, hạn chót hoặc hướng dẫn liên hệ theo dõi",
+  "btn_text": "Nút kêu gọi hành động (Ví dụ: THAM GIA NGAY, XEM CHI TIẾT, LIÊN HỆ...)",
   "footer_text": "Tên đơn vị hoặc thông điệp chân trang (in hoa)"
 }}"""
 
@@ -113,53 +114,65 @@ Cấu trúc JSON yêu cầu:
             "responseMimeType": "application/json"
         }
     }
+    encoded_data = json.dumps(payload).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
     
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
-    
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            resp_body = json.loads(resp.read().decode('utf-8'))
-            text_result = resp_body['candidates'][0]['content']['parts'][0]['text']
-            return json.loads(text_result)
-    except urllib.error.HTTPError as e:
-        if e.code == 400:
-            raise Exception("Gemini API Key không hợp lệ! Vui lòng kiểm tra lại Key.")
-        elif e.code == 429:
-            raise Exception("Gemini API Key đã hết lượt gọi trong ngày (Rate Limit)!")
-        else:
-            raise Exception(f"Lỗi gọi Gemini API (Mã {e.code})")
-    except Exception as e:
-        raise Exception(f"Không thể kết nối đến Gemini: {str(e)}")
+    # Danh sách model thử nghiệm tự động phòng trường hợp Google đổi phiên bản
+    models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    last_error_msg = ""
+
+    for model in models_to_try:
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={clean_key}"
+        req = urllib.request.Request(url, data=encoded_data, headers=headers, method='POST')
+        
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                resp_body = json.loads(resp.read().decode('utf-8'))
+                text_result = resp_body['candidates'][0]['content']['parts'][0]['text']
+                
+                # Bóc tách JSON an toàn
+                match = re.search(r'(\{[\s\S]*\})', text_result)
+                if match:
+                    return json.loads(match.group(1))
+                return json.loads(text_result)
+        except urllib.error.HTTPError as e:
+            raw_err = e.read().decode('utf-8', errors='ignore')
+            if e.code == 400:
+                raise Exception("Gemini API Key không hợp lệ! Vui lòng kiểm tra lại Key.")
+            elif e.code == 429:
+                raise Exception("Gemini API Key đã hết hạn ngạch lượt gọi trong ngày (Rate Limit)!")
+            elif e.code == 404:
+                last_error_msg = f"Model {model} không hỗ trợ (Mã 404)"
+                continue
+            else:
+                raise Exception(f"Lỗi gọi Gemini API (Mã {e.code}): {raw_err}")
+        except Exception as e:
+            raise Exception(f"Không thể kết nối đến AI: {str(e)}")
+            
+    raise Exception(f"Không kết nối được model Gemini nào. Lỗi: {last_error_msg}")
 
 def build_4k_html(data):
-    """Tạo HTML khổ 2160x3840 hoàn toàn dựa theo dữ liệu đầu vào"""
-    title = data.get('title', 'THÔNG TIN CHI TIẾT')
-    sub_title = data.get('agency', 'THÔNG BÁO')
-    tagline = data.get('doc_code', '★ THÔNG BÁO CHÍNH THỨC ★')
+    """Tạo HTML 2160x3840 hoàn toàn dựa theo nội dung phân tích thực tế"""
+    title = data.get('title', 'THÔNG BÁO').upper()
+    sub_title = data.get('agency', '').upper()
+    tagline = data.get('doc_code', '★ THÔNG TIN CHÍNH THỨC ★')
     
-    stat1_val = data.get('stat1_val', 'Thông Tin 1')
-    stat1_sub = data.get('stat1_sub', 'Nội dung chi tiết')
-    stat2_val = data.get('stat2_val', 'Thông Tin 2')
-    stat2_sub = data.get('stat2_sub', 'Nội dung chi tiết')
-    stat3_val = data.get('stat3_val', 'Thông Tin 3')
-    stat3_sub = data.get('stat3_sub', 'Nội dung chi tiết')
+    stat1_val = data.get('stat1_val', '')
+    stat1_sub = data.get('stat1_sub', '')
+    stat2_val = data.get('stat2_val', '')
+    stat2_sub = data.get('stat2_sub', '')
+    stat3_val = data.get('stat3_val', '')
+    stat3_sub = data.get('stat3_sub', '')
     
-    alert_title = data.get('alert_title', 'THÔNG TIN TRỌNG TÂM')
-    alert_lead = data.get('alert_lead', 'Nội dung quan trọng cần lưu ý')
-    alert_desc = data.get('alert_desc', 'Chi tiết các nội dung cần thực hiện theo thông báo.')
-    alert_reason = data.get('alert_reason', 'Căn cứ theo yêu cầu và quy định.')
+    alert_title = data.get('alert_title', 'NỘI DUNG TRỌNG TÂM')
+    alert_lead = data.get('alert_lead', '')
+    alert_desc = data.get('alert_desc', '')
+    alert_reason = data.get('alert_reason', '')
     
-    scope_title = data.get('scope_title', 'DANH SÁCH & HẠNG MỤC LIÊN QUAN')
+    scope_title = data.get('scope_title', 'DANH MỤC CHI TIẾT')
     hamlets = data.get('hamlets', [])
     if isinstance(hamlets, str):
         hamlets = [hamlets]
-    if not hamlets:
-        hamlets = ['Hạng mục 1', 'Hạng mục 2', 'Hạng mục 3', 'Hạng mục 4', 'Hạng mục 5']
     
     hamlet_rows = []
     chunk_size = 5
@@ -179,11 +192,11 @@ def build_4k_html(data):
                 hamlet_html += '<td style="border:none;"></td>'
         hamlet_html += "</tr>"
         
-    quote_text = data.get('quote_text', 'Mọi thắc mắc vui lòng liên hệ trực tiếp để được giải đáp cụ thể.')
-    slogan_highlight = data.get('slogan_highlight', 'ĐẢM BẢO CHÍNH XÁC - MINH BẠCH - HIỆU QUẢ')
-    notice_text = data.get('notice_text', 'Theo dõi thường xuyên các kênh thông tin để cập nhật thông báo mới.')
+    quote_text = data.get('quote_text', '')
+    slogan_highlight = data.get('slogan_highlight', '')
+    notice_text = data.get('notice_text', '')
     btn_text = data.get('btn_text', 'THEO DÕI NGAY')
-    footer_text = data.get('footer_text', 'THÔNG TIN CHÍNH THỨC')
+    footer_text = data.get('footer_text', sub_title or 'THÔNG TIN CHI TIẾT')
 
     html = f"""<!DOCTYPE html>
 <html lang="vi">
@@ -484,7 +497,7 @@ td.btn-td {{
           <span>{alert_title}</span>
         </div>
         <div class="alert-main-box">
-          <div class="alert-lead">⏰ {alert_lead}</div>
+          <div class="alert-lead">{alert_lead}</div>
           <div class="alert-desc">{alert_desc}</div>
         </div>
         <div class="reason-box">
@@ -715,13 +728,13 @@ def generate_infographic():
     if not raw_text:
         return jsonify({'success': False, 'error': 'Vui lòng dán văn bản hoặc tải file tài liệu!'}), 400
     
-    # 1. Gemini phân tích nội dung tùy ý do người dùng nhập vào
+    # 1. Gemini phân tích văn bản thực tế do bạn nhập
     try:
         infographic_data = call_gemini_to_extract_data(raw_text, gemini_key)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     
-    # 2. Sinh ảnh Infographic 4K hoàn toàn theo kết quả phân tích
+    # 2. Sinh ảnh Infographic 4K theo đúng nội dung vừa phân tích
     output_base = "Infographic_4K_Output"
     try:
         html_content = build_4k_html(infographic_data)
