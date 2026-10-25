@@ -1,12 +1,13 @@
 FROM python:3.9-slim
 
-# Cài đặt các gói hệ thống phụ trợ cho weasyprint/cffi
+# Cài đặt các gói hệ thống phụ trợ cho weasyprint và lệnh xuất ảnh pdftoppm
 RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libharfbuzz0b \
     libpangoft2-1.0-0 \
     libffi-dev \
     shared-mime-info \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
