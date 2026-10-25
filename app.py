@@ -1,5 +1,8 @@
 import os
+import io
 import re
+import zipfile
+import xml.etree.ElementTree as ET
 import subprocess
 import weasyprint
 import pypdf
@@ -27,15 +30,47 @@ def check_gmail_whitelist(email):
                 return False, "Gmail này chưa đăng ký trong nhóm Zalo CỘNG ĐỒNG KHAI THÁC AI HIỆU QUẢ. Vui lòng quét mã QR để inbox kích hoạt!"
     return True, "Hợp lệ"
 
+def extract_text_from_upload(file_storage):
+    """Trích xuất nội dung văn bản từ file Word (.docx), PDF hoặc TXT"""
+    filename = (file_storage.filename or '').lower()
+    content = file_storage.read()
+    file_storage.seek(0)
+    
+    # 1. Đọc file PDF
+    if filename.endswith('.pdf'):
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            pages = [page.extract_text() or '' for page in reader.pages]
+            return '\n'.join(pages).strip()
+        except Exception:
+            return ""
+            
+    # 2. Đọc file Word (.docx) trực tiếp không cần thư viện ngoài
+    elif filename.endswith('.docx'):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as docx:
+                xml_content = docx.read('word/document.xml')
+            tree = ET.fromstring(xml_content)
+            paragraphs = []
+            for elem in tree.iter():
+                if elem.tag.endswith('}p'):
+                    texts = [t.text for t in elem.iter() if t.tag.endswith('}t') and t.text]
+                    if texts:
+                        paragraphs.append(''.join(texts))
+            return '\n'.join(paragraphs).strip()
+        except Exception:
+            return ""
+            
+    # 3. Đọc file text
+    elif filename.endswith('.txt'):
+        try:
+            return content.decode('utf-8', errors='ignore').strip()
+        except Exception:
+            return ""
+            
+    return ""
+
 def build_4k_html(data):
-    """
-    Sinh mã HTML chuẩn nhận diện NHPinfo:
-    - 2160x3840 canvas
-    - Light Theme #f1f6fb
-    - Header Navy-Gold gradient
-    - Font-weight 900 cho từ khóa
-    - Tự động chia đều trục dọc sát biên
-    """
     title = data.get('title', 'THÔNG BÁO HOÀN TRẢ TIỀN BẢO HIỂM Y TẾ')
     sub_title = data.get('agency', 'BẢO HIỂM XÃ HỘI TỈNH ĐỒNG THÁP — CƠ SỞ THANH BÌNH')
     tagline = data.get('doc_code', '★ THÔNG BÁO CHÍNH THỨC ★')
@@ -57,7 +92,6 @@ def build_4k_html(data):
                                     'Ấp Tân Thới', 'Ấp Tân Dinh', 'Ấp Tân Hòa', 'Ấp Tân Bình Thượng', 'Ấp Tân Huề', 
                                     'Ấp Tân Phong', 'Ấp Tân Bình Hạ', 'Ấp Tân An', 'Ấp Thạnh An', 'Ấp Tân Thạnh'])
     
-    # Chia 5 cột
     hamlet_rows = []
     chunk_size = 5
     for i in range(0, len(hamlets), chunk_size):
@@ -78,7 +112,6 @@ def build_4k_html(data):
         
     quote_text = data.get('quote_text', 'Sau khi hoàn tất sắp xếp thời gian và phương thức theo quy định mới, cơ quan chức năng sẽ thông báo cụ thể thời gian và địa điểm tiếp tục thực hiện để người dân đến nhận tiền.')
     slogan_highlight = data.get('slogan_highlight', 'QUYỀN LỢI CỦA NGƯỜI DÂN LUÔN ĐƯỢC BẢO ĐẢM ĐẦY ĐỦ!')
-    
     notice_text = data.get('notice_text', 'Bà con chủ động theo dõi thông báo mới tại UBND xã, Bưu điện xã hoặc ViettelPost trên địa bàn.')
     btn_text = data.get('btn_text', 'CHỜ THÔNG BÁO MỚI')
     footer_text = data.get('footer_text', 'VÌ AN SINH XÃ HỘI VÀ QUYỀN LỢI NHÂN DÂN')
@@ -438,10 +471,8 @@ def render_html_to_4k_png(html_str, output_filename_base):
     pdf_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{output_filename_base}.pdf")
     png_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{output_filename_base}.png")
     
-    # 1. WeasyPrint renders single-page PDF
     weasyprint.HTML(string=html_str).write_pdf(pdf_path)
     
-    # 2. pdftoppm renders lossless 4K PNG at 96 DPI
     prefix = os.path.join(app.config['OUTPUT_FOLDER'], f"{output_filename_base}_tmp")
     subprocess.run(["pdftoppm", "-png", "-r", "96", pdf_path, prefix], check=True)
     
@@ -454,7 +485,98 @@ def render_html_to_4k_png(html_str, output_filename_base):
 
 @app.route('/')
 def index():
+    # Tự động chèn nút tải file Word/PDF vào giao diện hiện tại mà không cần sửa file HTML
+    template_path = os.path.join(app.root_path, 'templates', 'index.html')
+    if os.path.exists(template_path):
+        with open(template_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        if 'id="auto-file-uploader"' not in content:
+            upload_ui = """
+            <div id="auto-file-uploader" style="margin: 10px 0 15px 0; padding: 14px 18px; background: #f0f7ff; border: 2px dashed #0284c7; border-radius: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">📄</span>
+                    <div>
+                        <strong style="color: #0369a1; font-size: 14px;">Hoặc tải lên file Word (.docx) / PDF</strong>
+                        <div style="font-size: 12px; color: #64748b;">Hệ thống sẽ tự động đọc nội dung và điền vào ô bên dưới</div>
+                    </div>
+                </div>
+                <label style="background: linear-gradient(135deg, #0284c7, #0369a1); color: white; padding: 9px 18px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 13px; display: inline-block;">
+                    📂 Chọn file từ máy
+                    <input type="file" id="doc_file_input" accept=".docx,.pdf,.txt" style="display: none;">
+                </label>
+                <div id="upload_status" style="width: 100%; font-size: 13px; font-weight: bold; display: none; padding-top: 4px;"></div>
+            </div>
+            """
+
+            upload_script = """
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                var fileInput = document.getElementById('doc_file_input');
+                var status = document.getElementById('upload_status');
+                var textarea = document.querySelector('textarea');
+                
+                if (fileInput && textarea) {
+                    fileInput.addEventListener('change', function(e) {
+                        var file = e.target.files[0];
+                        if (!file) return;
+                        
+                        status.style.display = 'block';
+                        status.style.color = '#0284c7';
+                        status.innerText = '⏳ Đang đọc nội dung file "' + file.name + '"...';
+                        
+                        var formData = new FormData();
+                        formData.append('file', file);
+                        
+                        fetch('/api/extract-doc', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            if (data.success && data.text) {
+                                textarea.value = data.text;
+                                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                status.style.color = '#16a34a';
+                                status.innerText = '✅ Đã trích xuất thành công nội dung từ file "' + file.name + '"!';
+                            } else {
+                                status.style.color = '#dc2626';
+                                status.innerText = '❌ ' + (data.error || 'Không thể trích xuất văn bản từ file!');
+                            }
+                        })
+                        .catch(function(err) {
+                            status.style.color = '#dc2626';
+                            status.innerText = '❌ Lỗi đọc file: ' + err.message;
+                        });
+                    });
+                }
+            });
+            </script>
+            """
+
+            if '<textarea' in content:
+                content = content.replace('<textarea', upload_ui + '<textarea', 1)
+            if '</body>' in content:
+                content = content.replace('</body>', upload_script + '</body>', 1)
+            else:
+                content += upload_script
+
+        return content
     return render_template('index.html')
+
+@app.route('/api/extract-doc', methods=['POST'])
+def extract_doc():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'Chưa chọn file!'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'Tên file không hợp lệ!'}), 400
+    
+    text = extract_text_from_upload(file)
+    if not text:
+        return jsonify({'success': False, 'error': 'Không đọc được văn bản trong file (file trống hoặc định dạng chưa hỗ trợ)!'}), 400
+        
+    return jsonify({'success': True, 'text': text})
 
 @app.route('/api/generate', methods=['POST'])
 def generate_infographic():
@@ -464,11 +586,12 @@ def generate_infographic():
         return jsonify({'success': False, 'error': msg, 'show_qr': True}), 403
     
     raw_text = request.form.get('content', '').strip()
+    if not raw_text and 'file' in request.files:
+        raw_text = extract_text_from_upload(request.files['file'])
+
     if not raw_text:
         return jsonify({'success': False, 'error': 'Vui lòng dán văn bản hoặc tải file tài liệu!'}), 400
     
-    # Simple structured parsing or LLM API call
-    # Here we parse default fields from text or use fallback structure
     data = {
         'title': 'THÔNG BÁO TẠM DỪNG HOÀN TRẢ TIỀN ĐÓNG BHYT HỘ GIA ĐÌNH',
         'agency': 'BẢO HIỂM XÃ HỘI TỈNH ĐỒNG THÁP — CƠ SỞ THANH BÌNH',
